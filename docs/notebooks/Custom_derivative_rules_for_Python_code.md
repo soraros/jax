@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.0
+    jupytext_version: 1.12.0
 kernelspec:
   display_name: Python 3
   name: python3
@@ -422,16 +422,14 @@ For example, consider this `fixed_point` routine which computes a fixed point by
 
 from jax.lax import while_loop
 
-def fixed_point(f, a, x_guess):
+def fixed_point(f, a, x_init):
   def cond_fun(carry):
     x_prev, x = carry
     return jnp.abs(x_prev - x) > 1e-6
-
   def body_fun(carry):
     _, x = carry
     return x, f(a, x)
-
-  _, x_star = while_loop(cond_fun, body_fun, (x_guess, f(a, x_guess)))
+  _, x_star = while_loop(cond_fun, body_fun, (x_init, f(a, x_init)))
   return x_star
 ```
 
@@ -499,36 +497,28 @@ Here's the upshot:
 from jax import vjp
 
 @partial(custom_vjp, nondiff_argnums=(0,))
-def fixed_point(f, a, x_guess):
+def fixed_point(f, a, x_init):
   def cond_fun(carry):
     x_prev, x = carry
     return jnp.abs(x_prev - x) > 1e-6
-
   def body_fun(carry):
     _, x = carry
     return x, f(a, x)
-
-  _, x_star = while_loop(cond_fun, body_fun, (x_guess, f(a, x_guess)))
+  _, x_star = while_loop(cond_fun, body_fun, (x_init, f(a, x_init)))
   return x_star
 
 def fixed_point_fwd(f, a, x_init):
   x_star = fixed_point(f, a, x_init)
   return x_star, (a, x_star)
 
-def fixed_point_rev(f, res, x_star_bar):
+def fixed_point_bwd(f, res, v):
   a, x_star = res
   _, vjp_a = vjp(lambda a: f(a, x_star), a)
-  a_bar, = vjp_a(fixed_point(partial(rev_iter, f),
-                             (a, x_star, x_star_bar),
-                             x_star_bar))
-  return a_bar, jnp.zeros_like(x_star)
-  
-def rev_iter(f, packed, u):
-  a, x_star, x_star_bar = packed
   _, vjp_x = vjp(lambda x: f(a, x), x_star)
-  return x_star_bar + vjp_x(u)[0]
+  w = fixed_point(lambda v, u: v + vjp_x(u)[0], v, x_init=v)
+  return vjp_a(w)[0], None
 
-fixed_point.defvjp(fixed_point_fwd, fixed_point_rev)
+fixed_point.defvjp(fixed_point_fwd, fixed_point_bwd)
 ```
 
 ```{code-cell} ipython3
