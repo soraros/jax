@@ -886,20 +886,14 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
   new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
   same_shape = core.symbolic_equal_shape(np.shape(operand), new_sizes)
-  if dimensions is None:
-    same_dims = True
-    dims = None
-  else:
-    dims = api_util._ensure_index_tuple(dimensions)
-    same_dims = tuple(dims) == tuple(range(np.ndim(operand)))
-  if np.shape(operand) and same_shape and same_dims and isinstance(operand, Array):
+  if dimensions is not None:
+    operand = transpose(operand, dimensions)
+  if np.shape(operand) and same_shape and isinstance(operand, Array):
     return type_cast(Array, operand)
-  else:
-    dyn_shape, static_new_sizes = _extract_tracers_dyn_shape(new_sizes)
-
-    return reshape_p.bind(
-      operand, *dyn_shape, new_sizes=tuple(static_new_sizes),
-      dimensions=None if dims is None or same_dims else dims)
+  dyn_shape, static_new_sizes = _extract_tracers_dyn_shape(new_sizes)
+  return reshape_p.bind(operand, *dyn_shape,
+                        new_sizes=tuple(static_new_sizes),
+                        dimensions=None)
 
 def pad(operand: ArrayLike, padding_value: ArrayLike,
         padding_config: Sequence[Tuple[int, int, int]]) -> Array:
