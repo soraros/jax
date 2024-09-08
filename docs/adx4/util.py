@@ -12,9 +12,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import builtins
 from contextlib import contextmanager
+from typing import TypeAlias
 
 # === fix python3 regressions ===
 
@@ -65,3 +65,7 @@ class PrettyPrinter:
 def arglist_str(xs):
   args = ', '.join(map(str, xs))
   return f'({args})'
+
+# === type aliases ===
+
+Shape: TypeAlias = tuple[int, ...]

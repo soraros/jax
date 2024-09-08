@@ -13,12 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TypeAlias, Union, Sequence, Optional, Any, Callable, TypeVar
+from __future__ import annotations
+
+from collections.abc import Callable
+from collections.abc import Sequence as Seq
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Any, TypeAlias
 
-from util import *
-from core import *
+from core import (BuilderEmitter, CallableHof, Emitter,
+                  FrontendLoweringEmitter, Jaxpr, JaxType, Primitive, TraceVal,
+                  eval_emitter, none_ty)
 
 # === embedding ===
 
@@ -27,7 +32,7 @@ from core import *
 # explicitly so it's easier to follow the flow of data.
 @dataclass
 class CurrentEmitter:
-  emitter : Emitter
+  emitter: Emitter
 
 @contextmanager
 def set_current_emitter(emitter):
@@ -43,22 +48,23 @@ def top_level_emitter():
 
 current_emitter = CurrentEmitter(top_level_emitter())
 
-def emit_primitive(p, args, funargs=()):
+def emit_primitive(p: Primitive, args: Seq[PyVal], funargs: Seq[Jaxpr] = ()) -> TraceVal:
+  assert all(isinstance(fn, Jaxpr) for fn in funargs), funargs
   emitter = current_emitter.emitter
   args_canonical = [canonicalize_pyval(arg) for arg in args]
   arg_tys = [arg.ty for arg in args_canonical]
   if isinstance(p, CallableHof):
-    result_ty = None
+    result_ty = none_ty
   else:
     fun_tys = [f.ty for f in funargs]
-    result_ty = p.result_type(*(tuple(arg_tys) + tuple(fun_tys)))
+    result_ty = p.result_type(*(tuple(fun_tys) + tuple(arg_tys)))
   return emitter.emit_primitive(p, result_ty, args_canonical, funargs)
 
 # This turns a function that reads the implicit "current_emitter" context into
 # one that takes the emitter explicitly, conforming to the `OpStream` API
 @dataclass
 class WithExplicitEmitter:
-  f : Callable
+  f: Callable
   def __call__(self, emitter, *args):
     with set_current_emitter(emitter):
       return self.f(*args)
@@ -68,7 +74,7 @@ class WithExplicitEmitter:
 # representing a rank-0 array. We canonicalize these to a `TraceVal` before
 # calling `emit`.
 
-PyVal : TypeAlias = Any
+PyVal: TypeAlias = Any
 pyval_canonicalizers = {}
 
 def register_canonicalizer(t, f):
@@ -77,16 +83,14 @@ def register_canonicalizer(t, f):
 # may use current emitter, for example to build a FancyTuple from a python
 # tuple.
 def canonicalize_pyval(x: PyVal) -> TraceVal:
-  if isinstance(x, JaxVal):
+  if isinstance(x, TraceVal):
     return x
-  elif isinstance(x, Tracer):
-    return x
-  elif type(x) in pyval_canonicalizers:
-    return pyval_canonicalizers[type(x)](x)
+  elif fn := pyval_canonicalizers.get(type(x)):
+    return fn(x)
   else:
     raise TypeError(f'Unrecognized JAX type: {type(x)}')
 
-def trace_to_jaxpr(f, arg_types:list[JaxType]) -> Jaxpr:
+def trace_to_jaxpr(f: Callable, arg_types: Seq[JaxType]) -> Jaxpr:
   builder = BuilderEmitter(arg_types)
   with set_current_emitter(builder):
     result = canonicalize_pyval(f(*builder.args))

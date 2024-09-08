@@ -12,18 +12,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
-from typing import TypeAlias, Union, Sequence, Optional, Any, Callable, TypeVar
-from contextlib import contextmanager
+from collections.abc import Callable
+from collections.abc import Sequence as Seq
 from dataclasses import dataclass
+from typing import TypeAlias
 
-from util import *
-
-# === pre-declared aliases to avoid toposorting issues ===
-
-LazyJaxpr : TypeAlias = Any
-Jaxpr     : TypeAlias = Any
-JaxprType : TypeAlias = Any
+from util import PrettyPrinter, arglist_str
 
 # === data ===
 
@@ -31,66 +27,76 @@ class JaxType:
   def __eq__(self, other): raise NotImplementedError(type(self))
   def __str__(self): raise NotImplementedError(type(self))
 
+# === None type ===
+
+@dataclass
+class NoneType(JaxType):
+  def __str__(self): return "None"
+
+none_ty = NoneType()
+
 # Subclass this for new values. These should always be wholly concrete values.
 # No tracers or variables inside.
 class JaxVal:
-  ty : JaxType
+  @property
+  def ty(self) -> JaxType: raise NotImplementedError(type(self))
   def __str__(self):  raise NotImplementedError(type(self))
 
 @dataclass
 class Var:
-  ty : JaxType
+  ty: JaxType
   def __str__(self):
-    s = id(self)%1000 # hack!
+    s = id(self) % 1000 # hack!
     return f'v{s}:{str(self.ty)}'
   def __hash__(self): return id(self)
   def __eq__(self, other): return self is other
 
-Atom : TypeAlias = Var | JaxVal
+Atom: TypeAlias = Var | JaxVal
 
 # === primitives ops ===
 
 class Op:
   @property
-  def ir_level(self):          raise NotImplementedError(type(self))
-  def __str__(self):           raise NotImplementedError(type(self))
+  def ir_level(self) -> int: raise NotImplementedError(type(self))
+  def __str__(self) -> str: raise NotImplementedError(type(self))
 
-  def result_type(self, *args):  raise NotImplementedError(type(self))
+  def result_type(self, *_, **__) -> JaxType: raise NotImplementedError(type(self))
 
   # MdJax ops only
-  def jvp(self, primals:list[Atom], tangents:list[Atom]): raise NotImplementedError(type(self))
+  def jvp(self, primals: Seq[Atom], tangents: Seq[Atom]): raise NotImplementedError(type(self))
   # LoJax ops only
-  def impl(self, *args):       raise NotImplementedError(type(self))
+  def impl(self, *_, **__): raise NotImplementedError(type(self))
 
 class JaxprHof:
   @property
-  def ir_level(self):          raise NotImplementedError(type(self))
-  def __str__(self):           raise NotImplementedError(type(self))
+  def ir_level(self) -> int: raise NotImplementedError(type(self))
+  def __str__(self) -> str: raise NotImplementedError(type(self))
+
+  def result_type(self, *_, **__) -> JaxType: raise NotImplementedError(type(self))
 
   # MdJax ops only
   def jvp(self, funargs, primals, tangents): raise NotImplementedError(type(self))
   # LoJax ops only
-  def impl(self, *args_and_funargs): raise NotImplementedError(type(self))
+  def impl(self, *_, **__): raise NotImplementedError(type(self))
 
 class CallableHof:
   @property
-  def ir_level(self):          raise NotImplementedError(type(self))
-  def __str__(self):           raise NotImplementedError(type(self))
-
+  def ir_level(self) -> int: raise NotImplementedError(type(self))
+  def __str__(self) -> str: raise NotImplementedError(type(self))
 
   # MdJax ops only
   def jvp(self, funargs, primals, tangents): raise NotImplementedError(type(self))
   # LoJax ops only
   def impl(self, *args_and_funargs): raise NotImplementedError(type(self))
 
-Primitive : TypeAlias = Op | JaxprHof | CallableHof
+Primitive: TypeAlias = Op | JaxprHof | CallableHof
 
 @dataclass
 class JaxprEqn:
   binder: Var
-  op: Op
-  args: list[Atom]
-  funargs: list[Jaxpr]
+  op: Primitive
+  args: Seq[Atom]
+  funargs: Seq[Jaxpr]
   def __str__(self): return PrettyPrinter.to_str(self)
   def pretty_print(self, p):
     p.print_line(f'{self.binder} = {self.op}{arglist_str(self.args)}')
@@ -119,34 +125,34 @@ class Jaxpr:
 @dataclass
 class JaxprType:
   arg_types:  list[JaxType]
-  result_type : JaxType
+  result_type: JaxType
   def __str__(self): return f'{arglist_str(self.arg_types)} -> {self.result_type}'
 
 # An `OpStream` is a function that takes an Emitter object explicitly
-OpStream : TypeAlias = Callable # [[Emitter, ...], ...]
+OpStream: TypeAlias = Callable # [[Emitter, ...], ...]
 
 # === program transformations ===
 
-TraceVal : TypeAlias = Any
-FunArg : TypeAlias = Jaxpr | Callable
+# TraceVal: TypeAlias = Any
+FunArg: TypeAlias = Jaxpr | Callable
 
 class Emitter:
-  def emit_primitive(self, op:Op, result_type: JaxType, args:list[TraceVal], funargs:list[FunArg]) -> TraceVal:
+  def emit_primitive(self, p: Primitive, result_ty: JaxType, args: Seq[TraceVal], funargs: Seq[FunArg]) -> TraceVal:
     raise NotImplementedError(type(self))
 
 class Tracer:
-  ty : JaxType
+  ty: JaxType
   # these methods defer to the type
   def __getitem__(self, ix):
     return self.ty._getitem(self, ix)
 
-TraceVal : TypeAlias = JaxVal | Tracer
+TraceVal: TypeAlias = JaxVal | Tracer
 
 # === Evaluation with concrete values ===
 
 class EvalEmitter(Emitter):
-  def emit_primitive(self, p:Primitive, result_ty, args:tuple[JaxVal], fun_args):
-    return p.impl(result_ty, *(tuple(args) + tuple(fun_args)))
+  def emit_primitive(self, p, result_ty, args: Seq[JaxVal], funargs):  # type: ignore
+    return p.impl(result_ty, *(tuple(funargs) + tuple(args)))
 
 eval_emitter = EvalEmitter()
 
@@ -163,46 +169,44 @@ class BuilderEmitter(Emitter):
     self.args = [self.new_tracer(ty) for ty in arg_types]
     self.eqns = []
 
-  def new_tracer(self, ty):
+  def new_tracer(self, ty: JaxType) -> BuilderTracer:
     return BuilderTracer(new_var(ty), ty)
 
-  def build(self, result:TraceVal):
+  def build(self, result: TraceVal) -> Jaxpr:
     atom_result = self.traceval_to_atom(result)
     binders = [arg.var for arg in self.args]
     return Jaxpr(binders, self.eqns, atom_result)
 
-  def traceval_to_atom(self, arg:TraceVal) -> TraceVal:
+  def traceval_to_atom(self, arg: TraceVal) -> Atom:
     if isinstance(arg, BuilderTracer):
       return arg.var
     elif isinstance(arg, JaxVal):
       return arg
     else:
-      raise Exception
+      raise TypeError(arg)
 
-  def add_eqn(self, result_ty, p, args, funargs):
-    v = new_var(result_ty)
+  def add_eqn(self, result_ty: JaxType, p: Primitive, args: Seq[TraceVal], funargs: Seq[Jaxpr]):
     arg_atoms = [self.traceval_to_atom(arg) for arg in args]
     result = self.new_tracer(result_ty)
     self.eqns.append(JaxprEqn(result.var, p, arg_atoms, funargs))
     return result
 
-  def emit_primitive(self, p:Primitive, result_ty, args, funargs):
-    arg_tys = tuple(arg.ty for arg in args)
+  def emit_primitive(self, p, result_ty, args, funargs: Seq[Jaxpr]):  # type: ignore
     return self.add_eqn(result_ty, p, args, funargs)
 
 @dataclass
 class BuilderTracer(Tracer):
-  var : Var
-  ty  : JaxType
+  var: Var
+  ty : JaxType
 
-def materialize_jaxpr(stream:OpStream, arg_types:list[JaxType]) -> Jaxpr:
+def materialize_jaxpr(stream: OpStream, arg_types: Seq[JaxType]) -> Jaxpr:
   builder = BuilderEmitter(arg_types)
   stream_result = stream(builder, *builder.args)
   return builder.build(stream_result)
 
-def apply_jaxpr(emitter, jaxpr, vals):
-  env = {b : arg for b in jaxpr.binders}
-  def interpret_atom(x):
+def apply_jaxpr(emitter: Emitter, jaxpr: Jaxpr, vals: Seq) -> TraceVal:
+  env = dict(zip(jaxpr.binders, vals))
+  def interpret_atom(x) -> TraceVal:
     if isinstance(x, Var):
       return env[x]
     elif isinstance(x, JaxVal):
@@ -221,22 +225,22 @@ def apply_jaxpr(emitter, jaxpr, vals):
 FrontendIR = 2  # `jvp`, pytrees
 BackendIR  = 1
 
-FrontendAtom : TypeAlias = Atom
-BackendAtom  : TypeAlias = Atom
+FrontendAtom: TypeAlias = Atom
+BackendAtom : TypeAlias = Atom
 
-FrontendVar : TypeAlias = Var
-BackendVar  : TypeAlias = Var
+FrontendVar: TypeAlias = Var
+BackendVar: TypeAlias = Var
 
 # === Lowering ===
 
 @dataclass
 class FrontendLoweringEmitter(Emitter):
-  parent_emitter : Emitter
+  parent_emitter: Emitter
 
   def __init__(self, parent):
     self.parent_emitter = parent
 
-  def emit_primitive(self, p:Primitive, result_ty, args, funargs):
+  def emit_primitive(self, p, result_ty, args, funargs) -> TraceVal:
     if hasattr(p, "lower_frontend"):
       assert False
       # return p.lower_frontend(self, result_ty, *args)
@@ -250,7 +254,7 @@ class FrontendLoweringEmitter(Emitter):
       result_rep = self.parent_emitter.emit_primitive(p, result_ty_low, args_low, funargs_low)
       return self.lift_rep(result_ty, result_rep)
 
-  def lower_jaxpr(self, jaxpr_high:Jaxpr) -> Jaxpr:
+  def lower_jaxpr(self, jaxpr_high: Jaxpr) -> Jaxpr:
     def f_lowered(emitter, *arg_reps):
       lowering_emitter = FrontendLoweringEmitter(emitter)
       args_high = [self.lift_rep(ty, rep) for ty, rep in zip(jaxpr_high.ty.arg_types, arg_reps)]
@@ -261,7 +265,7 @@ class FrontendLoweringEmitter(Emitter):
     lowered_jaxpr = materialize_jaxpr(f_lowered, lowered_arg_types)
     return lowered_jaxpr
 
-  def lower_to_rep(self, x:TraceVal) -> TraceVal:
+  def lower_to_rep(self, x: TraceVal) -> TraceVal:
     # Lowering transforms an entire programs with no free variables. So
     # all FrontentLoweringTracers should be ours
     if isinstance(x, FrontendLoweringTracer):
@@ -274,7 +278,7 @@ class FrontendLoweringEmitter(Emitter):
     else:
       raise Exception(x, type(x))
 
-  def lift_rep(self, ty, rep:TraceVal) -> TraceVal:
+  def lift_rep(self, ty, rep: TraceVal) -> TraceVal:
     if isinstance(rep, Tracer):
       return FrontendLoweringTracer(ty, rep)
     elif isinstance(rep, JaxVal):
@@ -283,9 +287,9 @@ class FrontendLoweringEmitter(Emitter):
       else:
         return rep
     else:
-      raise Exception
+      raise Exception(rep, type(rep))
 
-  def lower_type(self, ty:JaxType) -> JaxType:
+  def lower_type(self, ty: JaxType) -> JaxType:
     if hasattr(ty, "lower_frontend"):
       return ty.lower_frontend()
     else:
@@ -294,7 +298,7 @@ class FrontendLoweringEmitter(Emitter):
 @dataclass
 class FrontendLoweringTracer(Tracer):
   ty : JaxVal
-  rep : TraceVal
+  rep: TraceVal
 
 # === jvp ===
 

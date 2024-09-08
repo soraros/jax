@@ -13,31 +13,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TypeAlias, Union, Sequence, Optional, Any, Callable, TypeVar
-from contextlib import contextmanager
-from dataclasses import dataclass
+from ops import TupleType, add, cond, greater, jax_float, sin, trace_to_jaxpr
 
-from core import *
-from ops import  *
 
 def fun0():
   x = add(1.0, 2.0)
   return x
 
 print(fun0())
+print("============")
 print(trace_to_jaxpr(fun0, []))
+print()
 
 def fun1():
   x = add(1.0, 2.0)
-  return cond(False, lambda: add(x, sin(1.0)), lambda: 1.0)
+  return cond(greater(x, 1.), lambda: add(x, sin(1.0)), lambda: 1.0)
 
 print(fun1())
 print("============")
 print(trace_to_jaxpr(fun1, []))
+print()
 
 def fun2(xy):
   x, y = xy
   return add(x, y)
 
 print(fun2((1.0, 2.0)))
+print("============")
 print(trace_to_jaxpr(fun2, [TupleType((jax_float, jax_float))]))
